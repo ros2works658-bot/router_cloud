@@ -52,11 +52,32 @@ if [ ! -f "$CONFIG_FILE" ]; then
     cat <<EOF > "$CONFIG_FILE"
 {
   "plugins": {
+    "webserver": {
+      "http_port": 8080,
+      "http_interface": "0.0.0.0",
+      "routes": [
+        {
+          "path": "/demo/zcam/rgb",
+          "handler": {
+            "zenoh": {
+              "key_expr": "demo/zcam/rgb",
+              "complete": false
+            }
+          }
+        },
+        {
+          "path": "/demo/zcam/depth", 
+          "handler": {
+            "zenoh": {
+              "key_expr": "demo/zcam/depth",
+              "complete": false
+            }
+          }
+        }
+      ]
+    },
     "rest": {
       "http_port": 8000
-    },
-    "webserver": {
-      "http_port": 8080
     },
     "storage_manager": {
       "storages": {
