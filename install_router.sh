@@ -52,41 +52,15 @@ if [ ! -f "$CONFIG_FILE" ]; then
     cat <<EOF > "$CONFIG_FILE"
 {
   "mode": "router",
-  "transport": {
-    "unicast": {
-      "open_timeout": 5000,
-      "accept_timeout": 5000
-    },
-    "multicast": {
-      "join_interval": 1000,
-      "group": "224.0.0.224"
-    }
+  "listen": {
+    "endpoints": ["tcp/0.0.0.0:7447"]
   },
   "plugins": {
-    "rest": {
-      "http_port": 8000,
-      "interfaces": ["0.0.0.0"]
-    },
     "webserver": {
       "http_port": 8080,
-      "ws_port": 8081,
-      "interfaces": ["0.0.0.0"],
-      "static_content": {
-        "enabled": true,
-        "root": "/var/www"
-      }
-    },
-    "storage_manager": {
-      "enabled": true
+      "work_thread_num": 4,
+      "max_block_thread_num": 8
     }
-  },
-  "authentication": {
-    "enabled": true,
-    "tokens": ["camera_stream_token"]
-  },
-  "congestion_control": {
-    "enabled": true,
-    "strategy": "auto"
   }
 }
 EOF
