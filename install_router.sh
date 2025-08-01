@@ -54,7 +54,8 @@ if [ ! -f "$CONFIG_FILE" ]; then
   "mode": "router",
   "transport": {
     "unicast": {
-      "listen": "0.0.0.0:7447"
+      "open_timeout": 5000,
+      "accept_timeout": 5000
     },
     "multicast": {
       "enabled": true,
