@@ -58,7 +58,7 @@ if [ ! -f "$CONFIG_FILE" ]; then
       "accept_timeout": 5000
     },
     "multicast": {
-      "enabled": true,
+      "join_interval": 1000,
       "group": "224.0.0.224"
     }
   },
