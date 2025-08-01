@@ -51,21 +51,47 @@ if [ ! -f "$CONFIG_FILE" ]; then
     echo "📝 Creating zenohd.json5 config..."
     cat <<EOF > "$CONFIG_FILE"
 {
+  "mode": "router",
+  "transport": {
+    "tcp": {
+      "listen": "tcp/0.0.0.0:7447"
+    },
+    "udp": {
+      "enabled": true,
+      "multicast": {
+        "enabled": true,
+        "group": "224.0.0.224"
+      }
+    },
+    "quic": {
+      "enabled": false
+    }
+  },
   "plugins": {
     "rest": {
-      "http_port": 8000
+      "http_port": 8000,
+      "interfaces": ["0.0.0.0"]
     },
     "webserver": {
-      "http_port": 8080
+      "http_port": 8080,
+      "ws_port": 8081,
+      "interfaces": ["0.0.0.0"],
+      "static_content": {
+        "enabled": true,
+        "root": "/var/www"
+      }
     },
     "storage_manager": {
-      "storages": {
-        "sensor_data": {
-          "key_expr": "co_analytics/**",
-          "volume": "memory"
-        }
-      }
+      "enabled": true
     }
+  },
+  "authentication": {
+    "enabled": true,
+    "tokens": ["camera_stream_token"]
+  },
+  "congestion_control": {
+    "enabled": true,
+    "strategy": "auto"
   }
 }
 EOF
