@@ -53,18 +53,12 @@ if [ ! -f "$CONFIG_FILE" ]; then
 {
   "mode": "router",
   "transport": {
-    "tcp": {
-      "listen": "tcp/0.0.0.0:7447"
+    "unicast": {
+      "listen": "0.0.0.0:7447"
     },
-    "udp": {
+    "multicast": {
       "enabled": true,
-      "multicast": {
-        "enabled": true,
-        "group": "224.0.0.224"
-      }
-    },
-    "quic": {
-      "enabled": false
+      "group": "224.0.0.224"
     }
   },
   "plugins": {
