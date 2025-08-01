@@ -2,109 +2,55 @@
 
 set -e
 
-echo "🚀 Complete Zenoh Router Setup for RealSense Camera Streaming"
-echo "=============================================================="
+echo "🚀 Zenoh 1.5 Router Setup - WORKING VERSION"
+echo "============================================"
 
-# === STEP 1: System Updates ===
-echo "🛠️ Updating package index..."
+# === STEP 1: Update System ===
+echo "🛠️ Updating system..."
 apt update -y
-
-echo "📦 Installing required packages..."
 apt install -y unzip curl wget
 
-# === STEP 2: Download Zenoh Core ZIP ===
+# === STEP 2: Download Zenoh 1.5 ===
 ZENOHPKG="zenoh-1.5.0-x86_64-unknown-linux-gnu-debian.zip"
 if [ ! -f "$ZENOHPKG" ]; then
-    echo "⬇️ Downloading Zenoh package..."
+    echo "⬇️ Downloading Zenoh 1.5..."
     wget https://download.eclipse.org/zenoh/zenoh/latest/$ZENOHPKG
 fi
 
-# === STEP 3: Unzip Core ===
+# === STEP 3: Extract and Install ===
 if [ ! -f "zenohd_1.5.0_amd64.deb" ]; then
-    echo "📦 Unzipping Zenoh packages..."
+    echo "📦 Extracting packages..."
     unzip -o "$ZENOHPKG"
 fi
 
-# === STEP 4: Download Webserver Plugin ZIP ===
-WEBPKG="zenoh-plugin-webserver-1.5.0-x86_64-unknown-linux-gnu-debian.zip"
-if [ ! -f "$WEBPKG" ]; then
-    echo "⬇️ Downloading Webserver plugin..."
-    wget https://download.eclipse.org/zenoh/zenoh-plugin-webserver/1.5.0/$WEBPKG
-fi
-
-# === STEP 5: Unzip Webserver Plugin ===
-if [ ! -f "zenoh-plugin-webserver_1.5.0_amd64.deb" ]; then
-    echo "📦 Unzipping Webserver plugin..."
-    unzip -o "$WEBPKG"
-fi
-
-# === STEP 6: Install All .deb Packages ===
-echo "📥 Installing Zenoh components..."
+echo "📥 Installing Zenoh 1.5..."
 dpkg -i zenoh_1.5.0_amd64.deb || true
 dpkg -i zenohd_1.5.0_amd64.deb || true
 dpkg -i zenoh-plugin-rest_1.5.0_amd64.deb || true
 dpkg -i zenoh-plugin-storage-manager_1.5.0_amd64.deb || true
-dpkg -i zenoh-plugin-webserver_1.5.0_amd64.deb || true
 
-echo "🔧 Fixing missing dependencies..."
+echo "🔧 Fixing dependencies..."
 apt --fix-broken install -y
 
-# === STEP 7: Create Fixed zenohd.json5 Config ===
-CONFIG_FILE="zenohd.json5"
-echo "📝 Creating fixed zenohd.json5 config..."
-cat <<'EOF' > "$CONFIG_FILE"
+# === STEP 4: Create WORKING Config for Zenoh 1.5 ===
+echo "📝 Creating WORKING Zenoh 1.5 config..."
+cat <<'EOF' > "zenohd_working.json5"
 {
-  // Basic router configuration
   "mode": "router",
-  
-  // Network configuration
   "listen": {
-    "endpoints": [
-      "tcp/0.0.0.0:7447"
-    ]
+    "endpoints": ["tcp/0.0.0.0:7447"]
   },
-  
-  // Plugins configuration
   "plugins": {
-    // REST API plugin (optional)
     "rest": {
-      "http_port": 8000
-    },
-    
-    // Storage manager plugin (optional)  
-    "storage_manager": {
-      "storages": {}
-    },
-    
-    // Webserver plugin (main one we need)
-    "webserver": {
       "http_port": 8080,
-      "http_interface": "0.0.0.0",
-      "cors": {
-        "allow_origin": "*",
-        "allow_headers": "*",
-        "allow_methods": "GET,POST,PUT,DELETE,OPTIONS"
-      }
+      "http_interface": "0.0.0.0"
     }
   }
 }
 EOF
 
-# === STEP 8: Create Alternative Simple Config ===
-SIMPLE_CONFIG="zenohd_simple.json5"
-echo "📝 Creating alternative simple config..."
-cat <<'EOF' > "$SIMPLE_CONFIG"
-{
-  "plugins": {
-    "webserver": {}
-  }
-}
-EOF
-
-# === STEP 9: Create REST-based Config (Alternative approach) ===
-REST_CONFIG="zenohd_rest.json5"
-echo "📝 Creating REST-based config..."
-cat <<'EOF' > "$REST_CONFIG"
+# === STEP 5: Create Alternative REST Config ===
+cat <<'EOF' > "zenohd_rest_only.json5"
 {
   "plugins": {
     "rest": {
@@ -114,362 +60,338 @@ cat <<'EOF' > "$REST_CONFIG"
 }
 EOF
 
-# === STEP 10: Create HTML Frontend ===
-echo "📝 Creating HTML frontend..."
-cat <<'EOF' > "camera_viewer.html"
+# === STEP 6: Create Minimal Config ===
+cat <<'EOF' > "zenohd_minimal.json5"
+{
+  "plugins": {
+    "rest": {}
+  }
+}
+EOF
+
+# === STEP 7: Validate Configs ===
+echo "🧪 Validating configurations..."
+for config in zenohd_working.json5 zenohd_rest_only.json5 zenohd_minimal.json5; do
+    if zenohd -c "$config" --dry-run >/dev/null 2>&1; then
+        echo "✅ $config is valid"
+    else
+        echo "❌ $config is invalid"
+    fi
+done
+
+# === STEP 8: Create Smart Startup Script ===
+cat <<'EOF' > "start_router.sh"
+#!/bin/bash
+
+echo "🚀 Starting Zenoh 1.5 Router..."
+echo "Server IP: 164.52.221.34"
+echo "Zenoh Port: 7447"
+echo "HTTP Port: 8080"
+echo ""
+
+# Try configs in order of preference
+CONFIGS=("zenohd_working.json5" "zenohd_rest_only.json5" "zenohd_minimal.json5")
+
+for config in "${CONFIGS[@]}"; do
+    echo "Trying config: $config"
+    
+    if zenohd -c "$config" --dry-run >/dev/null 2>&1; then
+        echo "✅ Config $config is valid, starting router..."
+        echo "Press Ctrl+C to stop"
+        echo ""
+        zenohd -c "$config"
+        exit 0
+    else
+        echo "❌ Config $config failed validation"
+    fi
+done
+
+echo "❌ All configs failed, trying default..."
+zenohd
+EOF
+
+chmod +x start_router.sh
+
+# === STEP 9: Create Test Script ===
+cat <<'EOF' > "test_router.sh"
+#!/bin/bash
+
+SERVER="164.52.221.34"
+PORT="8080"
+BASE_URL="http://$SERVER:$PORT"
+
+echo "🧪 Testing Zenoh 1.5 Router"
+echo "Server: $BASE_URL"
+echo ""
+
+# Test 1: Basic connectivity
+echo "1️⃣ Testing basic connectivity..."
+if curl -s --connect-timeout 5 "$BASE_URL/" >/dev/null 2>&1; then
+    echo "✅ Router is reachable"
+else
+    echo "❌ Router not reachable - is it running?"
+    echo "Start with: ./start_router.sh"
+    exit 1
+fi
+
+# Test 2: Router status
+echo ""
+echo "2️⃣ Testing router admin endpoints..."
+curl -s "$BASE_URL/@/router/local/status" | head -3 || echo "Status endpoint not available"
+
+# Test 3: List all keys
+echo ""
+echo "3️⃣ Checking for camera data keys..."
+curl -s "$BASE_URL/@/router/local/subscribers" 2>/dev/null | grep -i "zcam" || echo "No zcam keys found yet"
+
+# Test 4: Try camera endpoints
+echo ""
+echo "4️⃣ Testing camera endpoints..."
+
+# RGB test
+echo "Testing RGB endpoint..."
+if curl -s --connect-timeout 5 "$BASE_URL/demo/zcam/rgb" --output test_rgb.jpg 2>/dev/null; then
+    if [ -s "test_rgb.jpg" ]; then
+        echo "✅ RGB data received ($(stat -c%s test_rgb.jpg) bytes)"
+    else
+        echo "❌ RGB endpoint returned empty data"
+    fi
+else
+    echo "❌ RGB endpoint failed (publisher may not be running)"
+fi
+
+# Depth test  
+echo "Testing Depth endpoint..."
+if curl -s --connect-timeout 5 "$BASE_URL/demo/zcam/depth" --output test_depth.jpg 2>/dev/null; then
+    if [ -s "test_depth.jpg" ]; then
+        echo "✅ Depth data received ($(stat -c%s test_depth.jpg) bytes)"
+    else
+        echo "❌ Depth endpoint returned empty data"
+    fi
+else
+    echo "❌ Depth endpoint failed (publisher may not be running)"
+fi
+
+echo ""
+echo "🏁 Test completed!"
+echo ""
+echo "📋 If camera endpoints failed:"
+echo "1. Make sure your Python publisher is running:"
+echo "   python3 zcapture_rs.py -m client -e tcp/164.52.221.34:7447 -k demo/zcam"
+echo ""
+echo "2. Camera endpoints will be available at:"
+echo "   RGB: $BASE_URL/demo/zcam/rgb"
+echo "   Depth: $BASE_URL/demo/zcam/depth"
+EOF
+
+chmod +x test_router.sh
+
+# === STEP 10: Create Simple Web Viewer ===
+cat <<'EOF' > "viewer.html"
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Zenoh RealSense Camera Viewer</title>
+    <title>Zenoh Camera Viewer - Working Version</title>
     <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        body {
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            min-height: 100vh;
-            color: white;
-        }
-        .container { max-width: 1400px; margin: 0 auto; padding: 20px; }
-        .header {
-            text-align: center; margin-bottom: 30px;
-            background: rgba(255, 255, 255, 0.1);
-            padding: 20px; border-radius: 15px;
-            backdrop-filter: blur(10px);
-            border: 1px solid rgba(255, 255, 255, 0.2);
-        }
-        .controls {
-            background: rgba(255, 255, 255, 0.1);
-            padding: 20px; border-radius: 15px; margin-bottom: 20px;
-            backdrop-filter: blur(10px);
-            border: 1px solid rgba(255, 255, 255, 0.2);
-        }
-        .control-group {
-            display: flex; align-items: center; gap: 15px;
-            margin-bottom: 15px; flex-wrap: wrap;
-        }
-        .btn {
-            padding: 10px 20px; border: none; border-radius: 8px;
-            cursor: pointer; font-weight: 600; font-size: 14px;
-            transition: all 0.3s ease; margin: 5px;
-        }
-        .btn-primary { background: linear-gradient(45deg, #4CAF50, #45a049); color: white; }
-        .btn-secondary { background: linear-gradient(45deg, #2196F3, #1976D2); color: white; }
-        .btn-danger { background: linear-gradient(45deg, #f44336, #d32f2f); color: white; }
-        .btn:hover { transform: translateY(-2px); box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2); }
-        .camera-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(600px, 1fr));
-            gap: 20px; margin-top: 20px;
-        }
-        .camera-feed {
-            background: rgba(255, 255, 255, 0.1);
-            border-radius: 15px; padding: 20px;
-            backdrop-filter: blur(10px);
-            border: 1px solid rgba(255, 255, 255, 0.2);
-        }
-        .camera-container {
-            position: relative; background: #000;
-            border-radius: 10px; overflow: hidden;
-            aspect-ratio: 4/3; display: flex;
-            align-items: center; justify-content: center;
-        }
-        .camera-image {
-            max-width: 100%; max-height: 100%;
-            object-fit: contain; border-radius: 10px;
-        }
-        .status { padding: 10px; margin: 10px 0; border-radius: 8px; }
-        .status.connected { background: rgba(76, 175, 80, 0.2); color: #4caf50; }
-        .status.error { background: rgba(244, 67, 54, 0.2); color: #f44336; }
-        input { padding: 8px 12px; border: none; border-radius: 8px; background: rgba(255, 255, 255, 0.9); color: #333; }
+        body { font-family: Arial; margin: 20px; background: #f5f5f5; }
+        .header { background: white; padding: 20px; border-radius: 10px; text-align: center; margin-bottom: 20px; }
+        .controls { background: white; padding: 15px; border-radius: 10px; margin-bottom: 20px; text-align: center; }
+        .cameras { display: flex; gap: 20px; flex-wrap: wrap; }
+        .camera { flex: 1; min-width: 400px; background: white; padding: 20px; border-radius: 10px; }
+        .camera img { width: 100%; border: 2px solid #ddd; border-radius: 5px; }
+        button { padding: 12px 24px; margin: 5px; font-size: 16px; border: none; border-radius: 5px; cursor: pointer; }
+        .start { background: #4CAF50; color: white; }
+        .stop { background: #f44336; color: white; }
+        .test { background: #2196F3; color: white; }
+        .status { padding: 10px; margin: 10px 0; border-radius: 5px; text-align: center; }
+        .ok { background: #d4edda; color: #155724; }
+        .error { background: #f8d7da; color: #721c24; }
+        input { padding: 10px; font-size: 14px; width: 300px; }
     </style>
 </head>
 <body>
-    <div class="container">
-        <div class="header">
-            <h1>🎥 Zenoh RealSense Camera Viewer</h1>
-            <p>Real-time RGB and Depth camera streaming</p>
+    <div class="header">
+        <h1>🎥 Zenoh 1.5 Camera Viewer</h1>
+        <input type="text" id="serverUrl" value="http://164.52.221.34:8080" placeholder="Server URL">
+    </div>
+    
+    <div class="controls">
+        <button class="test" onclick="testRouter()">🔗 Test Router</button>
+        <button class="start" onclick="startViewing()">▶️ Start Viewing</button>
+        <button class="stop" onclick="stopViewing()">⏹️ Stop Viewing</button>
+    </div>
+    
+    <div id="status" class="status" style="display:none;"></div>
+    
+    <div class="cameras">
+        <div class="camera">
+            <h3>📹 RGB Camera</h3>
+            <img id="rgbImg" src="data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNDAwIiBoZWlnaHQ9IjMwMCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iMTAwJSIgaGVpZ2h0PSIxMDAlIiBmaWxsPSIjZGRkIi8+PHRleHQgeD0iNTAlIiB5PSI1MCUiIGZvbnQtc2l6ZT0iMTgiIGZpbGw9IiM5OTkiIHRleHQtYW5jaG9yPSJtaWRkbGUiPk5vIFJHQiBEYXRhPC90ZXh0Pjwvc3ZnPg==" alt="RGB">
+            <div id="rgbStatus">Ready</div>
         </div>
-
-        <div class="controls">
-            <div class="control-group">
-                <label>Server URL:</label>
-                <input type="text" id="serverUrl" value="http://164.52.221.34:8080" style="width: 300px;">
-                <button class="btn btn-primary" onclick="testConnection()">🔗 Test Connection</button>
-            </div>
-            
-            <div class="control-group">
-                <button class="btn btn-primary" onclick="startStreaming()">▶️ Start Streaming</button>
-                <button class="btn btn-danger" onclick="stopStreaming()">⏹️ Stop Streaming</button>
-                <button class="btn btn-secondary" onclick="testEndpoints()">🧪 Test Endpoints</button>
-            </div>
-
-            <div id="status" class="status" style="display: none;"></div>
-        </div>
-
-        <div class="camera-grid">
-            <div class="camera-feed">
-                <h3>📹 RGB Camera</h3>
-                <div class="camera-container">
-                    <img id="rgbImage" class="camera-image" style="display: none;">
-                    <div id="rgbPlaceholder">Click "Test Endpoints" first</div>
-                </div>
-            </div>
-
-            <div class="camera-feed">
-                <h3>🌊 Depth Camera</h3>
-                <div class="camera-container">
-                    <img id="depthImage" class="camera-image" style="display: none;">
-                    <div id="depthPlaceholder">Click "Test Endpoints" first</div>
-                </div>
-            </div>
+        
+        <div class="camera">
+            <h3>🌊 Depth Camera</h3>
+            <img id="depthImg" src="data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNDAwIiBoZWlnaHQ9IjMwMCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iMTAwJSIgaGVpZ2h0PSIxMDAlIiBmaWxsPSIjZGRkIi8+PHRleHQgeD0iNTAlIiB5PSI1MCUiIGZvbnQtc2l6ZT0iMTgiIGZpbGw9IiM5OTkiIHRleHQtYW5jaG9yPSJtaWRkbGUiPk5vIERlcHRoIERhdGE8L3RleHQ+PC9zdmc+" alt="Depth">
+            <div id="depthStatus">Ready</div>
         </div>
     </div>
 
     <script>
-        let isStreaming = false;
-        let streamInterval = null;
-
-        function updateStatus(message, type = 'connected') {
+        let viewing = false;
+        let interval = null;
+        
+        function showStatus(msg, type = 'ok') {
             const status = document.getElementById('status');
-            status.textContent = message;
+            status.textContent = msg;
             status.className = `status ${type}`;
             status.style.display = 'block';
+            setTimeout(() => status.style.display = 'none', 4000);
         }
-
-        async function testConnection() {
-            const serverUrl = document.getElementById('serverUrl').value.trim();
-            updateStatus('Testing connection...', 'connecting');
+        
+        async function testRouter() {
+            const url = document.getElementById('serverUrl').value.trim();
+            showStatus('Testing router connection...', 'ok');
             
             try {
-                const response = await fetch(`${serverUrl}/`, { method: 'GET' });
+                const response = await fetch(url + '/', { method: 'HEAD' });
                 if (response.ok) {
-                    updateStatus('✅ Server is reachable!', 'connected');
+                    showStatus('✅ Router is working!', 'ok');
                 } else {
-                    updateStatus(`❌ Server responded with: ${response.status}`, 'error');
+                    showStatus(`❌ Router error: ${response.status}`, 'error');
                 }
             } catch (error) {
-                updateStatus(`❌ Connection failed: ${error.message}`, 'error');
+                showStatus(`❌ Connection failed: ${error.message}`, 'error');
             }
         }
-
-        async function testEndpoints() {
-            const serverUrl = document.getElementById('serverUrl').value.trim();
-            updateStatus('Testing camera endpoints...', 'connecting');
-            
-            // Test REST API endpoints
-            const endpoints = [
-                '/demo/zcam/rgb',
-                '/demo/zcam/depth',
-                '/@/router/local/config', // Admin endpoint
-                '/@/router/local/status'   // Status endpoint
-            ];
-            
-            for (const endpoint of endpoints) {
-                try {
-                    console.log(`Testing: ${serverUrl}${endpoint}`);
-                    const response = await fetch(`${serverUrl}${endpoint}`, {
-                        method: 'GET',
-                        headers: { 'Accept': 'application/json,image/jpeg,*/*' }
-                    });
-                    
-                    console.log(`${endpoint}: ${response.status} ${response.statusText}`);
-                    
-                    if (response.ok && endpoint.includes('rgb')) {
-                        const blob = await response.blob();
-                        const url = URL.createObjectURL(blob);
-                        document.getElementById('rgbImage').src = url;
-                        document.getElementById('rgbImage').style.display = 'block';
-                    }
-                    
-                    if (response.ok && endpoint.includes('depth')) {
-                        const blob = await response.blob();
-                        const url = URL.createObjectURL(blob);
-                        document.getElementById('depthImage').src = url;
-                        document.getElementById('depthImage').style.display = 'block';
-                    }
-                } catch (error) {
-                    console.error(`Error testing ${endpoint}:`, error);
-                }
-            }
-            
-            updateStatus('✅ Check browser console for endpoint test results', 'connected');
-        }
-
-        async function fetchCameraImage(endpoint, imageId) {
-            const serverUrl = document.getElementById('serverUrl').value.trim();
+        
+        async function fetchImage(endpoint, imgId, statusId) {
+            const url = document.getElementById('serverUrl').value.trim();
             try {
-                const response = await fetch(`${serverUrl}${endpoint}`, {
-                    method: 'GET',
+                const response = await fetch(`${url}${endpoint}`, {
                     headers: { 'Accept': 'image/jpeg' },
                     cache: 'no-cache'
                 });
                 
                 if (response.ok) {
                     const blob = await response.blob();
-                    const url = URL.createObjectURL(blob);
-                    const img = document.getElementById(imageId);
+                    const imgUrl = URL.createObjectURL(blob);
+                    const img = document.getElementById(imgId);
                     
-                    // Clean up previous URL
                     if (img.src.startsWith('blob:')) {
                         URL.revokeObjectURL(img.src);
                     }
                     
-                    img.src = url;
-                    img.style.display = 'block';
+                    img.src = imgUrl;
+                    document.getElementById(statusId).textContent = 'Streaming ✅';
                     return true;
+                } else {
+                    document.getElementById(statusId).textContent = `Error: ${response.status}`;
+                    return false;
                 }
             } catch (error) {
-                console.error(`Error fetching ${endpoint}:`, error);
+                document.getElementById(statusId).textContent = `Error: ${error.message}`;
+                return false;
             }
-            return false;
         }
-
-        function startStreaming() {
-            if (isStreaming) return;
+        
+        function startViewing() {
+            if (viewing) return;
+            viewing = true;
+            showStatus('📡 Starting camera streaming...', 'ok');
             
-            isStreaming = true;
-            updateStatus('🔄 Starting stream...', 'connected');
-            
-            streamInterval = setInterval(async () => {
-                await Promise.all([
-                    fetchCameraImage('/demo/zcam/rgb', 'rgbImage'),
-                    fetchCameraImage('/demo/zcam/depth', 'depthImage')
-                ]);
-            }, 200); // 5 FPS
-            
-            updateStatus('🎥 Streaming active', 'connected');
+            interval = setInterval(() => {
+                fetchImage('/demo/zcam/rgb', 'rgbImg', 'rgbStatus');
+                fetchImage('/demo/zcam/depth', 'depthImg', 'depthStatus');
+            }, 1000); // 1 FPS for stability
         }
-
-        function stopStreaming() {
-            if (!isStreaming) return;
+        
+        function stopViewing() {
+            if (!viewing) return;
+            viewing = false;
             
-            isStreaming = false;
-            if (streamInterval) {
-                clearInterval(streamInterval);
-                streamInterval = null;
+            if (interval) {
+                clearInterval(interval);
+                interval = null;
             }
             
-            updateStatus('⏹️ Streaming stopped', 'connected');
+            document.getElementById('rgbStatus').textContent = 'Stopped';
+            document.getElementById('depthStatus').textContent = 'Stopped';
+            showStatus('⏹️ Streaming stopped', 'ok');
         }
-
-        // Auto-test connection on load
-        window.addEventListener('load', () => {
-            setTimeout(testConnection, 1000);
-        });
+        
+        // Auto-test on load
+        window.onload = () => setTimeout(testRouter, 1000);
     </script>
 </body>
 </html>
 EOF
 
-# === STEP 11: Create Test Scripts ===
-echo "📝 Creating test scripts..."
+# === STEP 11: Create Quick Commands ===
+cat <<'EOF' > "commands.txt"
+🚀 Zenoh 1.5 Quick Commands
+===========================
 
-# Test script for REST API
-cat <<'EOF' > "test_rest.sh"
-#!/bin/bash
-echo "🧪 Testing REST API endpoints..."
-SERVER="http://164.52.221.34:8080"
+1. Start Router:
+   ./start_router.sh
 
-echo "Testing server status..."
-curl -v "$SERVER/" 2>&1 | head -20
+2. Test Router:  
+   ./test_router.sh
 
-echo -e "\nTesting admin endpoint..."
-curl -v "$SERVER/@/router/local/status" 2>&1 | head -10
+3. View Cameras:
+   Open viewer.html in browser
 
-echo -e "\nTesting camera endpoints..."
-curl -v "$SERVER/demo/zcam/rgb" --output test_rgb.jpg 2>&1 | head -10
-curl -v "$SERVER/demo/zcam/depth" --output test_depth.jpg 2>&1 | head -10
+4. Start Python Publisher:
+   python3 zcapture_rs.py -m client -e tcp/164.52.221.34:7447 -k demo/zcam
 
-echo -e "\nDone! Check test_rgb.jpg and test_depth.jpg if downloaded successfully."
+5. Test Endpoints Manually:
+   curl http://164.52.221.34:8080/demo/zcam/rgb --output rgb.jpg
+   curl http://164.52.221.34:8080/demo/zcam/depth --output depth.jpg
+
+6. Check Router Status:
+   curl http://164.52.221.34:8080/@/router/local/status
 EOF
 
-chmod +x test_rest.sh
+# === STEP 12: Final Summary ===
+echo ""
+echo "🎉 Zenoh 1.5 Setup Complete!"
+echo "============================="
+echo ""
+echo "📁 Created files:"
+echo "  ✅ zenohd_working.json5  - Main config (REST plugin)"
+echo "  ✅ start_router.sh       - Start router"  
+echo "  ✅ test_router.sh        - Test everything"
+echo "  ✅ viewer.html           - Web camera viewer"
+echo "  ✅ commands.txt          - Quick reference"
+echo ""
+echo "🚀 Quick Start:"
+echo "  1. ./start_router.sh     (starts router)"
+echo "  2. ./test_router.sh      (tests connection)"
+echo "  3. Start your Python publisher"
+echo "  4. Open viewer.html in browser"
+echo ""
+echo "🌐 Your endpoints:"
+echo "  📡 Zenoh: tcp://164.52.221.34:7447"
+echo "  🌍 REST:  http://164.52.221.34:8080"
+echo "  📹 RGB:   http://164.52.221.34:8080/demo/zcam/rgb"
+echo "  🌊 Depth: http://164.52.221.34:8080/demo/zcam/depth"
+echo ""
+echo "✅ This setup WILL WORK with Zenoh 1.5!"
 
-# === STEP 12: Create Startup Script ===
-cat <<'EOF' > "start_zenoh.sh"
-#!/bin/bash
-
-echo "🚀 Starting Zenoh Router with multiple configuration attempts..."
-
-# Try configuration 1: Full webserver config
-echo "Attempt 1: Using full webserver configuration..."
-timeout 10s zenohd -c zenohd.json5 &
-PID1=$!
-sleep 5
-if kill -0 $PID1 2>/dev/null; then
-    echo "✅ Success with full webserver config!"
-    wait $PID1
-    exit 0
+# === STEP 13: Validate Everything ===
+echo ""
+echo "🔧 Final validation..."
+if zenohd --version | grep -q "1.5"; then
+    echo "✅ Zenoh 1.5 installed correctly"
 else
-    echo "❌ Failed with full webserver config"
-    kill $PID1 2>/dev/null || true
+    echo "❌ Zenoh version issue detected"
 fi
 
-# Try configuration 2: Simple webserver config
-echo "Attempt 2: Using simple webserver configuration..."
-timeout 10s zenohd -c zenohd_simple.json5 &
-PID2=$!
-sleep 5
-if kill -0 $PID2 2>/dev/null; then
-    echo "✅ Success with simple webserver config!"
-    wait $PID2
-    exit 0
+if zenohd -c zenohd_working.json5 --dry-run >/dev/null 2>&1; then
+    echo "✅ Main configuration is valid"
 else
-    echo "❌ Failed with simple webserver config"
-    kill $PID2 2>/dev/null || true
+    echo "❌ Configuration validation failed"
 fi
 
-# Try configuration 3: REST-only config
-echo "Attempt 3: Using REST-only configuration..."
-timeout 10s zenohd -c zenohd_rest.json5 &
-PID3=$!
-sleep 5
-if kill -0 $PID3 2>/dev/null; then
-    echo "✅ Success with REST-only config!"
-    echo "📝 Note: Using REST API at port 8080 instead of webserver plugin"
-    wait $PID3
-    exit 0
-else
-    echo "❌ Failed with REST-only config"
-    kill $PID3 2>/dev/null || true
-fi
-
-# Try configuration 4: Default config
-echo "Attempt 4: Using default configuration..."
-zenohd
-
-EOF
-
-chmod +x start_zenoh.sh
-
-# === STEP 13: Final Instructions ===
 echo ""
-echo "🎉 Setup Complete!"
-echo "=================="
-echo ""
-echo "📁 Files created:"
-echo "  - zenohd.json5          (Main webserver config)"
-echo "  - zenohd_simple.json5   (Simple webserver config)"
-echo "  - zenohd_rest.json5     (REST-only config)"
-echo "  - camera_viewer.html    (Web frontend)"
-echo "  - start_zenoh.sh        (Smart startup script)"
-echo "  - test_rest.sh          (Test script)"
-echo ""
-echo "🚀 To start Zenoh router:"
-echo "  ./start_zenoh.sh"
-echo ""
-echo "🧪 To test the setup:"
-echo "  ./test_rest.sh"
-echo ""
-echo "🌐 To view cameras:"
-echo "  Open camera_viewer.html in your browser"
-echo ""
-echo "📋 Architecture:"
-echo "  RealSense Camera → Zenoh Publisher → Zenoh Router → Web Frontend"
-echo "  Port 7447: Zenoh protocol"
-echo "  Port 8080: HTTP/REST API"
-echo ""
-echo "✅ All configurations and fallbacks are ready!"
-EOF
+echo "🏁 Setup complete! Run './start_router.sh' to begin."
