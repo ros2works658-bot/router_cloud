@@ -51,6 +51,21 @@ if [ ! -f "$CONFIG_FILE" ]; then
     echo "📝 Creating zenohd.json5 config..."
     cat <<EOF > "$CONFIG_FILE"
 {
+  "plugins": {
+    "rest": {
+      "http_port": 8000
+    },
+    "storage_manager": {
+      "storages": {
+        "sensor_data": {
+          "key_expr": "co_analytics/**",
+          "volume": "memory"
+        }
+      }
+    }
+  }
+}
+{
   "mode": "router",
   "listen": {
     "endpoints": ["tcp/0.0.0.0:7447"]
