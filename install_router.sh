@@ -51,7 +51,16 @@ if [ ! -f "$CONFIG_FILE" ]; then
     echo "📝 Creating zenohd.json5 config..."
     cat <<EOF > "$CONFIG_FILE"
 {
+  "mode": "router",
+  "listen": {
+    "endpoints": ["tcp/0.0.0.0:7447"]
+  },
   "plugins": {
+    "webserver": {
+      "http_port": 8080,
+      "work_thread_num": 4,
+      "max_block_thread_num": 8
+    },
     "rest": {
       "http_port": 8000
     },
@@ -62,19 +71,6 @@ if [ ! -f "$CONFIG_FILE" ]; then
           "volume": "memory"
         }
       }
-    }
-  }
-}
-{
-  "mode": "router",
-  "listen": {
-    "endpoints": ["tcp/0.0.0.0:7447"]
-  },
-  "plugins": {
-    "webserver": {
-      "http_port": 8080,
-      "work_thread_num": 4,
-      "max_block_thread_num": 8
     }
   }
 }
