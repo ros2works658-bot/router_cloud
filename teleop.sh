@@ -61,8 +61,6 @@ if [ ! -f "$CONFIG_FILE" ]; then
       "work_thread_num": 4,
       "max_block_thread_num": 8
     },
-{
-  "plugins": {
     "rest": {
       "http_port": 8000,
       "cors_allow_origin": "*",
@@ -71,6 +69,7 @@ if [ ! -f "$CONFIG_FILE" ]; then
     }
   }
 }
+
 EOF
 fi
 
