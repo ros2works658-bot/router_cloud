@@ -1,0 +1,295 @@
+import argparse
+import json
+import time
+import signal
+import sys
+import threading
+
+import cv2
+import numpy as np
+import pyrealsense2 as rs
+import zenoh
+
+# Optional TurboJPEG for faster JPEG encoding
+try:
+    from turbojpeg import TurboJPEG, TJPF_BGR, TJSAMP_420  # type: ignore
+    _turbo = TurboJPEG()
+    _has_turbo = True
+except Exception:
+    _turbo = None
+    _has_turbo = False
+
+# Reduce OpenCV threading overhead
+try:
+    cv2.setNumThreads(1)
+except Exception:
+    pass
+
+
+def get_enum_safe(enum_cls, name):
+    try:
+        # e.g., zenoh.Priority.REAL_TIME()
+        value = getattr(enum_cls, name)()
+        return value
+    except Exception:
+        try:
+            # e.g., zenoh.Priority.REAL_TIME
+            return getattr(enum_cls, name)
+        except Exception:
+            return None
+
+
+def start_realsense(width: int, height: int, fps: int) -> tuple[rs.pipeline, rs.pipeline_profile]:
+    pipeline = rs.pipeline()
+    cfg = rs.config()
+    cfg.enable_stream(rs.stream.color, width, height, rs.format.bgr8, fps)
+    profile = None
+    try:
+        profile = pipeline.start(cfg)
+    except Exception as err:
+        print(f"[WARN] Requested color mode {width}x{height}@{fps} not supported: {err}")
+        fallbacks = [
+            (640, 360, 30),
+            (848, 480, 30),
+            (640, 480, 30),
+            (1280, 720, 15),
+        ]
+        for w, h, f in fallbacks:
+            try:
+                try:
+                    pipeline.stop()
+                except Exception:
+                    pass
+                cfg2 = rs.config()
+                cfg2.enable_stream(rs.stream.color, w, h, rs.format.bgr8, f)
+                profile = pipeline.start(cfg2)
+                print(f"[INFO] Fallback color mode: {w}x{h}@{f}")
+                break
+            except Exception as e2:
+                print(f"[WARN] Fallback {w}x{h}@{f} failed: {e2}")
+        if profile is None:
+            raise RuntimeError("No supported RealSense color mode found")
+
+    # Minimize internal buffering for low latency
+    try:
+        dev = profile.get_device()
+        for sensor in dev.sensors:
+            if sensor.supports(rs.option.frames_queue_size):
+                sensor.set_option(rs.option.frames_queue_size, 1)
+    except Exception:
+        pass
+
+    return pipeline, profile
+
+
+def encode_jpeg(frame_bgr: np.ndarray, quality: int = 60) -> bytes:
+    if _has_turbo:
+        return _turbo.encode(frame_bgr, quality=quality, pixel_format=TJPF_BGR, subsampling=TJSAMP_420)
+    ok, enc = cv2.imencode('.jpg', frame_bgr, [int(cv2.IMWRITE_JPEG_QUALITY), int(quality)])
+    if not ok:
+        raise RuntimeError("JPEG encoding failed")
+    return enc.tobytes()
+
+
+def open_zenoh_session(connect_endpoints: list[str] | None) -> zenoh.Session:
+    conf = zenoh.Config()
+    conf.insert_json5("mode", json.dumps("peer"))
+    if connect_endpoints is not None:
+        if len(connect_endpoints) == 1:
+            conf.insert_json5("connect", json.dumps({"endpoints": [connect_endpoints[0]]}))
+        else:
+            conf.insert_json5("connect", json.dumps({"endpoints": connect_endpoints}))
+    print(f"[INFO] Connecting to Zenoh router: {connect_endpoints}")
+    return zenoh.open(conf)
+
+
+def declare_publisher_safe(z: zenoh.Session, key: str):
+    prio = get_enum_safe(zenoh.Priority, "REAL_TIME")
+    cc_drop = get_enum_safe(zenoh.CongestionControl, "DROP")
+    try:
+        pub = z.declare_publisher(key, priority=prio, congestion_control=cc_drop)
+        return pub, True
+    except Exception:
+        # Fallback: return None -> will use z.put
+        print("[WARN] Publisher QoS not supported by this zenoh version. Falling back to session.put().")
+        return None, False
+
+
+def start_latest_only_threads(pipeline: rs.pipeline, z: zenoh.Session, key: str, pub, use_pub: bool,
+                               out_width: int, out_height: int, quality: int, pub_fps: int | None) -> tuple[threading.Thread, threading.Thread, threading.Event]:
+    latest_lock = threading.Lock()
+    latest = {"img": None}
+    stop = threading.Event()
+
+    def capture():
+        while not stop.is_set():
+            try:
+                frames = pipeline.wait_for_frames()
+                # Drain backlog to newest
+                while True:
+                    polled = pipeline.poll_for_frames()
+                    if polled:
+                        frames = polled
+                        continue
+                    break
+                color = frames.get_color_frame()
+                if not color:
+                    continue
+                img = np.asanyarray(color.get_data())
+                if (img.shape[1], img.shape[0]) != (out_width, out_height):
+                    img = cv2.resize(img, (out_width, out_height), interpolation=cv2.INTER_LINEAR)
+                with latest_lock:
+                    latest["img"] = img
+            except Exception:
+                time.sleep(0.001)
+
+    def publish():
+        interval = None if not pub_fps or pub_fps <= 0 else 1.0 / float(pub_fps)
+        next_ts = time.monotonic() if interval else None
+        frame_count = 0
+        while not stop.is_set():
+            img = None
+            with latest_lock:
+                if latest["img"] is not None:
+                    img = latest["img"]
+                    latest["img"] = None
+            if img is None:
+                time.sleep(0.001)
+                continue
+            # Scheduler alignment to avoid drift/bursts
+            if interval is not None and next_ts is not None:
+                now = time.monotonic()
+                if now < next_ts:
+                    time.sleep(min(0.002, next_ts - now))
+                    continue
+                next_ts = now + interval
+            try:
+                jpeg_bytes = encode_jpeg(img, quality=quality)
+                if use_pub and pub is not None:
+                    try:
+                        pub.put(jpeg_bytes)
+                    except Exception:
+                        z.put(key, jpeg_bytes)
+                else:
+                    try:
+                        prio = get_enum_safe(zenoh.Priority, "REAL_TIME")
+                        cc = get_enum_safe(zenoh.CongestionControl, "DROP")
+                        z.put(key, jpeg_bytes, priority=prio, congestion_control=cc)
+                    except Exception:
+                        z.put(key, jpeg_bytes)
+                frame_count += 1
+                if frame_count % 60 == 0:
+                    print(f"[INFO] Published {frame_count} frames to {key}")
+            except Exception as e:
+                print(f"[ERROR] Publish error: {e}")
+                time.sleep(0.002)
+
+    t_cap = threading.Thread(target=capture, daemon=True)
+    t_pub = threading.Thread(target=publish, daemon=True)
+    t_cap.start()
+    t_pub.start()
+    return t_cap, t_pub, stop
+
+
+def no_drop_loop(pipeline: rs.pipeline, z: zenoh.Session, key: str, pub, use_pub: bool,
+                 out_width: int, out_height: int, quality: int, fps: int) -> None:
+    # BLOCK mode is requested via declare_publisher elsewhere for true reliability.
+    interval = 1.0 / float(max(1, fps))
+    last_warn = 0.0
+    frame_count = 0
+    while True:
+        start = time.monotonic()
+        frames = pipeline.wait_for_frames()
+        color = frames.get_color_frame()
+        if not color:
+            continue
+        img = np.asanyarray(color.get_data())
+        if (img.shape[1], img.shape[0]) != (out_width, out_height):
+            img = cv2.resize(img, (out_width, out_height), interpolation=cv2.INTER_LINEAR)
+        jpeg_bytes = encode_jpeg(img, quality=quality)
+
+        if use_pub and pub is not None:
+            try:
+                pub.put(jpeg_bytes)
+            except Exception:
+                z.put(key, jpeg_bytes)
+        else:
+            z.put(key, jpeg_bytes)
+
+        frame_count += 1
+        elapsed = time.monotonic() - start
+        if elapsed < interval:
+            time.sleep(interval - elapsed)
+        elif time.monotonic() - last_warn > 2.0:
+            print(f"[WARN] Pipeline slower than target ({elapsed*1000:.1f} ms > {interval*1000:.1f} ms). Reduce resolution/quality/fps.")
+            last_warn = time.monotonic()
+        if frame_count % 60 == 0:
+            print(f"[INFO] Published {frame_count} frames (no-drop) to {key}")
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(prog='zrs_capture_fast', description='Low-latency RealSense → Zenoh publisher')
+    parser.add_argument('-e', '--connect', type=str, metavar='ENDPOINT', action='append', help='Zenoh endpoints to connect to')
+    parser.add_argument('-k', '--key', type=str, default='demo/cams/0', help='Key expression base')
+    parser.add_argument('--width', type=int, default=640, help='Output width (default: 640)')
+    parser.add_argument('--height', type=int, default=360, help='Output height (default: 360)')
+    parser.add_argument('--cam-width', type=int, default=640, help='Camera mode width (default: 640)')
+    parser.add_argument('--cam-height', type=int, default=480, help='Camera mode height (default: 480)')
+    parser.add_argument('--fps', type=int, default=30, help='Camera FPS (default: 30)')
+    parser.add_argument('--quality', type=int, default=60, help='JPEG quality 1-100 (default: 60)')
+    parser.add_argument('--pub-fps', type=int, default=15, help='Publish rate for latest-only mode (default: 15)')
+    parser.add_argument('--no-drop', action='store_true', help='Publish every frame reliably (may increase lag)')
+    args = parser.parse_args()
+
+    # Graceful shutdown
+    stopping = {'stop': False}
+
+    def _sigint(_sig, _frm):
+        stopping['stop'] = True
+    signal.signal(signal.SIGINT, _sigint)
+
+    # Open Zenoh
+    z = open_zenoh_session(args.connect)
+    key = args.key.rstrip('/') + '/rgb'
+
+    # In latest-only mode, use DROP/REAL_TIME if possible
+    pub = None
+    use_pub = False
+    if not args.no_drop:
+        pub, use_pub = declare_publisher_safe(z, key)
+
+    # Start RealSense
+    pipeline, _ = start_realsense(args.cam_width, args.cam_height, max(5, min(60, int(args.fps))))
+    print("[INFO] RealSense started. Streaming...")
+
+    try:
+        if args.no_drop:
+            no_drop_loop(pipeline, z, key, pub, use_pub, args.width, args.height, args.quality, max(1, args.fps))
+        else:
+            # Start the latest-only threads
+            t_cap, t_pub, stop = start_latest_only_threads(pipeline, z, key, pub, use_pub, args.width, args.height, args.quality, args.pub_fps)
+            # Wait for the threads to finish (they are daemon, so this will block until stop is set)
+            stop.wait()
+    except KeyboardInterrupt:
+        pass
+    except Exception as e:
+        print(f"[ERROR] Fatal error in main loop: {e}")
+    finally:
+        try:
+            pipeline.stop()
+        except Exception:
+            pass
+        try:
+            if pub is not None:
+                pub.undeclare()
+        except Exception:
+            pass
+        try:
+            z.close()
+        except Exception:
+            pass
+        print("[INFO] Stopped")
+
+
+if __name__ == '__main__':
+    main() 
